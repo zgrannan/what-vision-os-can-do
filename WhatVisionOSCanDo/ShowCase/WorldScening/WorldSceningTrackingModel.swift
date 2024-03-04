@@ -9,6 +9,7 @@ import ARKit
 import Foundation
 import RealityKit
 import ARKit
+import SwiftUI
 
 class WorldSceningTrackingModel: TrackingModel {
     let sceneDataProvider = SceneReconstructionProvider(modes: [.classification])
@@ -28,8 +29,9 @@ class WorldSceningTrackingModel: TrackingModel {
                         // print classifications
                         print("add anchor classification is \(String(describing: geometry.classifications))")
                         try await createMeshEntity(geometry, anchor)
+                        let meshCount = rootEntity.children.count
+                        print("There are now \(meshCount) meshes")
                     case .updated:
-                        print("update")
                         try await updateMeshEntity(geometry, anchor)
                     case .removed:
                         print("removed anchor classification is \(String(describing: geometry.classifications))")
@@ -44,7 +46,7 @@ class WorldSceningTrackingModel: TrackingModel {
     // MARK: Geometry Mesh
     
     @MainActor fileprivate  func createMeshEntity(_ geometry: MeshAnchor.Geometry, _ anchor: MeshAnchor) async throws  {
-        let modelEntity = try await generateModelEntity(geometry: geometry)
+        let modelEntity = try await generateModelEntity(anchorId: anchor.id, geometry: geometry)
         let anchorEntity = AnchorEntity(world: anchor.originFromAnchorTransform)
         anchorEntity.addChild(modelEntity)
         anchorEntity.name = "MeshAnchor-\(anchor.id)"
@@ -52,7 +54,7 @@ class WorldSceningTrackingModel: TrackingModel {
     }
     
     @MainActor fileprivate func updateMeshEntity(_ geometry: MeshAnchor.Geometry, _ anchor: MeshAnchor) async throws {
-        let modelEntity = try await generateModelEntity(geometry: geometry)
+        let modelEntity = try await generateModelEntity(anchorId: anchor.id, geometry: geometry)
         if let anchorEntity = rootEntity.findEntity(named: "MeshAnchor-\(anchor.id)") {
             anchorEntity.children.removeAll()
             anchorEntity.addChild(modelEntity)
@@ -67,7 +69,30 @@ class WorldSceningTrackingModel: TrackingModel {
     
     // MARK: Helpers
     
-    @MainActor fileprivate func generateModelEntity(geometry: MeshAnchor.Geometry) async throws -> ModelEntity {
+    private func colorFromUUID(_ uuid: UUID) -> SimpleMaterial.Color {
+        var redByte: UInt8 = 0
+        var greenByte: UInt8 = 0
+        var blueByte: UInt8 = 0
+        
+        // Extract bytes from UUID
+        let data = withUnsafePointer(to: uuid.uuid) {
+            Data(bytes: $0, count: MemoryLayout.size(ofValue: uuid.uuid))
+        }
+        
+        // Use specific bytes for color components
+        redByte = data[0]
+        greenByte = data[1]
+        blueByte = data[2]
+        
+        // Normalize the values to [0, 1] for UIColor
+        let red = CGFloat(redByte) / 255.0
+        let green = CGFloat(greenByte) / 255.0
+        let blue = CGFloat(blueByte) / 255.0
+        
+        return SimpleMaterial.Color(red: red, green: green, blue: blue, alpha: 1.0)
+    }
+    
+    @MainActor fileprivate func generateModelEntity(anchorId: UUID,geometry: MeshAnchor.Geometry) async throws -> ModelEntity {
         // generate mesh
         var desc = MeshDescriptor()
         let posValues = geometry.vertices.asSIMD3(ofType: Float.self)
@@ -85,8 +110,8 @@ class WorldSceningTrackingModel: TrackingModel {
                 }
             )
         }
-        let meshResource = try await MeshResource.generate(from: [desc])
-        let material = SimpleMaterial(color: .red, isMetallic: false)
+        let meshResource = try MeshResource.generate(from: [desc])
+        let material = SimpleMaterial(color: colorFromUUID(anchorId), isMetallic: false)
         let modelEntity = ModelEntity(mesh: meshResource, materials: [material])
         return modelEntity
     }
